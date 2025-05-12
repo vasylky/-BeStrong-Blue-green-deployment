@@ -1,7 +1,7 @@
 apiVersion: v2
 name: bestrong
 version: 0.1.0
-description: A Helm chart for BeStrong ASP.NET Core Web API
+description: A Helm chart for BeStrong0 ASP.NET Core Web API
 
 type: application
 
