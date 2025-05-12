@@ -3,7 +3,7 @@ trigger:
 
 variables:
   azureContainerRegistry: 'bestrong'
-  azureSubscriptionForACR: 'Azure Subscription'
+  azureSubscriptionForACR: 'Azure Subscription'  # Використовуйте ім'я service connection
   azureResourceGroupForACR: 'pivinter-rg'
   imageRepository: 'bestrong-api'
   tag: '$(Build.BuildId)'
@@ -58,7 +58,7 @@ stages:
     - task: AzureCLI@2
       displayName: 'Push Helm Chart to ACR'
       inputs:
-        azureSubscription: '$(azureSubscriptionForACR)'
+        azureSubscription: 'azure-conn'  # Перевірте правильність Service Connection
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
@@ -92,8 +92,8 @@ stages:
             displayName: 'Helm Upgrade'
             inputs:
               connectionType: 'Azure Resource Manager'
-              azureSubscription: 3cb13e56-0b91-49d0-9687-ef0fe38a3160
-              azureResourceGroup: rg-bestrong
+              azureSubscription: 'azure-conn'  # Використовуйте правильне ім'я або ID підключення
+              azureResourceGroup: '$(azureResourceGroupForACR)'
               kubernetesCluster: 'aks-bestrong'
               namespace: 'default'
               command: 'upgrade'
