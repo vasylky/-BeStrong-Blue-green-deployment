@@ -51,14 +51,7 @@ stages:
       inputs:
         helmVersionToInstall: 'latest'
     
-    - script: |
-        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-        helm repo update
-        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-          --namespace ingress-nginx \
-          --create-namespace \
-          --set controller.service.type=LoadBalancer
-          displayName: 'Install Ingress NGINX'
+
 
     # Using Helm v3's OCI support instead of deprecated az acr helm commands
     - task: AzureCLI@2
@@ -101,7 +94,7 @@ stages:
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
-              
+
           - task: AzureCLI@2
             displayName: 'Deploy from ACR to AKS'
             inputs:
@@ -109,23 +102,30 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Login to ACR
-                az acr login --name $(azureContainerRegistry)
-                
-                # Set HELM_EXPERIMENTAL_OCI for OCI support
-                export HELM_EXPERIMENTAL_OCI=1
-                
-                # Pull the chart from ACR
-                helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
-                
-                # Use kubectl to ensure we're connected to the right cluster
+                echo "⚙️ Getting AKS credentials..."
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
-                
+
+                echo "📦 Installing ingress-nginx with LoadBalancer..."
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                helm repo update
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+                  --namespace ingress-nginx \
+                  --create-namespace \
+                  --set controller.service.type=LoadBalancer
+
+                echo "🔐 Logging in to ACR..."
+                az acr login --name $(azureContainerRegistry)
+
+                echo "⤵️ Pulling Helm chart from ACR..."
+                export HELM_EXPERIMENTAL_OCI=1
+                helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
+
+                echo "🚀 Deploying chart to AKS..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
                   --set image.tag=$(tag) \
-                  --set replicaCount=1 \
+                  --set replicaCount=2 \
                   --set image.pullPolicy=IfNotPresent \
                   --set environment.ASPNETCORE_ENVIRONMENT=Production \
                   --namespace default
