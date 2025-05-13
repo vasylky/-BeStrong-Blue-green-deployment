@@ -1,0 +1,9 @@
+replicaCount: 1
+
+image:
+  repository: bestrong.azurecr.io/helm/bestrong
+  tag: "135"
+  pullPolicy: IfNotPresent
+
+environment:
+  ASPNETCORE_ENVIRONMENT: "Production"
