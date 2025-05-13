@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: bestrong.azurecr.io/helm/bestrong
-  tag: ""
+  tag: "latest"
   pullPolicy: IfNotPresent
 
 environment:
