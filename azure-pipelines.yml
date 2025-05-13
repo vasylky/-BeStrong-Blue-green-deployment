@@ -3,10 +3,12 @@ trigger:
 
 variables:
   azureContainerRegistry: 'bestrong'
-  azureSubscriptionForACR: 'Azure Subscription'  # Використовуйте ім'я service connection
-  azureResourceGroupForACR: 'pivinter-rg'
+  azureResourceGroup: 'pivinter-rg'
   imageRepository: 'bestrong-api'
   tag: '$(Build.BuildId)'
+  # Separate connection types for different Azure resources
+  dockerRegistryServiceConnection: 'bestrong-acr'  # Docker registry connection
+  azureRmServiceConnection: 'azure-conn'           # Azure Resource Manager connection
 
 stages:
 # Stage 1: Build & Push Docker Image to ACR
@@ -22,12 +24,12 @@ stages:
       displayName: 'Login to ACR'
       inputs:
         command: login
-        containerRegistry: 'bestrong-acr' 
+        containerRegistry: '$(dockerRegistryServiceConnection)' 
 
     - task: Docker@2
       displayName: 'Build and Push Docker Image'
       inputs:
-        containerRegistry: 'bestrong-acr'
+        containerRegistry: '$(dockerRegistryServiceConnection)'
         repository: '$(imageRepository)'
         command: buildAndPush
         dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
@@ -55,13 +57,18 @@ stages:
           --destination $(Build.ArtifactStagingDirectory)
       displayName: 'Package Helm Chart'
 
+    # Using AzureCLI@2 with correct service connection
     - task: AzureCLI@2
       displayName: 'Push Helm Chart to ACR'
       inputs:
-        azureSubscription: 'azure-conn'  # Перевірте правильність Service Connection
+        azureSubscription: '$(azureRmServiceConnection)'
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
+          # Ensure the ACR login works properly
+          az acr login --name $(azureContainerRegistry)
+          
+          # Using az acr helm command (if using Helm 3, consider using OCI artifacts)
           az acr helm repo add --name $(azureContainerRegistry)
           az acr helm push \
             --name $(azureContainerRegistry) \
@@ -92,8 +99,8 @@ stages:
             displayName: 'Helm Upgrade'
             inputs:
               connectionType: 'Azure Resource Manager'
-              azureSubscription: 'azure-conn'  # Використовуйте правильне ім'я або ID підключення
-              azureResourceGroup: '$(azureResourceGroupForACR)'
+              azureSubscription: '$(azureRmServiceConnection)'
+              azureResourceGroup: '$(azureResourceGroup)'
               kubernetesCluster: 'aks-bestrong'
               namespace: 'default'
               command: 'upgrade'
