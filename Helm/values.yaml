@@ -22,7 +22,7 @@ ingress:
     kubernetes.io/ingress.class: nginx
     # Add additional annotations as needed
   hosts:
-    - host: bestrong.example.com
+    - host: bestrong.local
       paths:
         - path: /
           pathType: Prefix
