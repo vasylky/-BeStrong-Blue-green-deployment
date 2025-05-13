@@ -51,28 +51,28 @@ stages:
       inputs:
         helmVersionToInstall: 'latest'
 
-    - script: |
-        helm package $(Build.SourcesDirectory)/Helm \
-          --version $(Build.BuildId) \
-          --destination $(Build.ArtifactStagingDirectory)
-      displayName: 'Package Helm Chart'
-
-    # Using AzureCLI@2 with correct service connection
+    # Using Helm v3's OCI support instead of deprecated az acr helm commands
     - task: AzureCLI@2
-      displayName: 'Push Helm Chart to ACR'
+      displayName: 'Push Helm Chart to ACR as OCI artifact'
       inputs:
         azureSubscription: '$(azureRmServiceConnection)'
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          # Ensure the ACR login works properly
+          # Login to ACR using the Azure CLI
           az acr login --name $(azureContainerRegistry)
           
-          # Using az acr helm command (if using Helm 3, consider using OCI artifacts)
-          az acr helm repo add --name $(azureContainerRegistry)
-          az acr helm push \
-            --name $(azureContainerRegistry) \
-            $(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
+          # Package the Helm chart
+          helm package $(Build.SourcesDirectory)/Helm \
+            --version $(Build.BuildId) \
+            --destination $(Build.ArtifactStagingDirectory)
+          
+          # Push Helm chart as OCI artifact to ACR
+          export HELM_EXPERIMENTAL_OCI=1
+          CHART_PATH=$(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
+          
+          # Push the chart using Helm's OCI support
+          helm push $CHART_PATH oci://$(azureContainerRegistry).azurecr.io/helm
 
 # Stage 3: Deploy to AKS
 - stage: Deploy
@@ -89,7 +89,13 @@ stages:
       runOnce:
         deploy:
           steps:
-          - checkout: self
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download Helm Chart'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'bestrong-$(Build.BuildId).tgz'
+              downloadPath: '$(Agent.BuildDirectory)'
 
           - task: HelmInstaller@1
             inputs:
@@ -104,7 +110,7 @@ stages:
               kubernetesCluster: 'aks-bestrong'
               namespace: 'default'
               command: 'upgrade'
-              chartType: 'Name'
-              chartName: '$(azureContainerRegistry)/bestrong'
+              chartType: 'FilePath'
+              chartPath: '$(Agent.BuildDirectory)/bestrong-$(Build.BuildId).tgz'
               releaseName: 'bestrong-api'
-              arguments: '--version $(Build.BuildId) --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) --set image.tag=$(tag)'
+              arguments: '--set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) --set image.tag=$(tag)'
