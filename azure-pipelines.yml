@@ -3,7 +3,7 @@ trigger:
 
 variables:
   azureContainerRegistry: 'bestrong'
-  azureResourceGroup: 'pivinter-rg'
+  azureResourceGroup: 'rg-bestrong'
   imageRepository: 'bestrong-api'
   tag: '$(Build.BuildId)'
   # Separate connection types for different Azure resources
