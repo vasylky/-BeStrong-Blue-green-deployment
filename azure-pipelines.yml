@@ -94,7 +94,7 @@ stages:
             inputs:
               buildType: 'current'
               downloadType: 'single'
-              artifactName: 'bestrong-$(Build.BuildId).tgz'
+              artifactName: 'helm-chart'
               downloadPath: '$(Agent.BuildDirectory)'
 
           - task: HelmInstaller@1
@@ -111,6 +111,6 @@ stages:
               namespace: 'default'
               command: 'upgrade'
               chartType: 'FilePath'
-              chartPath: '$(Agent.BuildDirectory)/bestrong-$(Build.BuildId).tgz'
+              chartPath: '$(Agent.BuildDirectory)/helm-chart/bestrong-$(Build.BuildId).tgz'
               releaseName: 'bestrong-api'
               arguments: '--set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) --set image.tag=$(tag)'
