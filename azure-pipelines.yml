@@ -50,6 +50,15 @@ stages:
     - task: HelmInstaller@1
       inputs:
         helmVersionToInstall: 'latest'
+    
+    - script: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo update
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          --namespace ingress-nginx \
+          --create-namespace \
+          --set controller.service.type=LoadBalancer
+          displayName: 'Install Ingress NGINX'
 
     # Using Helm v3's OCI support instead of deprecated az acr helm commands
     - task: AzureCLI@2
