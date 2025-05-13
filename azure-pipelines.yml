@@ -89,28 +89,32 @@ stages:
       runOnce:
         deploy:
           steps:
-          - task: DownloadBuildArtifacts@0
-            displayName: 'Download Helm Chart'
-            inputs:
-              buildType: 'current'
-              downloadType: 'single'
-              artifactName: 'helm-chart'
-              downloadPath: '$(Agent.BuildDirectory)'
-
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
-
-          - task: HelmDeploy@0
-            displayName: 'Helm Upgrade'
+              
+          - task: AzureCLI@2
+            displayName: 'Deploy from ACR to AKS'
             inputs:
-              connectionType: 'Azure Resource Manager'
               azureSubscription: '$(azureRmServiceConnection)'
-              azureResourceGroup: '$(azureResourceGroup)'
-              kubernetesCluster: 'aks-bestrong'
-              namespace: 'default'
-              command: 'upgrade'
-              chartType: 'FilePath'
-              chartPath: '$(Agent.BuildDirectory)/helm-chart/bestrong-$(Build.BuildId).tgz'
-              releaseName: 'bestrong-api'
-              arguments: '--set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) --set image.tag=$(tag)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Login to ACR
+                az acr login --name $(azureContainerRegistry)
+                
+                # Set HELM_EXPERIMENTAL_OCI for OCI support
+                export HELM_EXPERIMENTAL_OCI=1
+                
+                # Pull the chart from ACR
+                helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
+                
+                # Use kubectl to ensure we're connected to the right cluster
+                az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
+                
+                # Deploy the chart
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
+                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.tag=$(tag) \
+                  --namespace default
