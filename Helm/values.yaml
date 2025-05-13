@@ -7,3 +7,5 @@ image:
 
 environment:
   ASPNETCORE_ENVIRONMENT: "Production"
+nameOverride: ""
+fullnameOverride: ""
