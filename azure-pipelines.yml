@@ -112,9 +112,9 @@ stages:
                 # Use kubectl to ensure we're connected to the right cluster
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
                 
-                # Deploy the chart
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
                   --set image.tag=$(tag) \
+                  --values $(Build.SourcesDirectory)/Helm/values.yaml \
                   --namespace default
