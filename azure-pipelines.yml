@@ -116,5 +116,7 @@ stages:
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
                   --set image.tag=$(tag) \
-                  --values $(Build.SourcesDirectory)/Helm/values.yaml \
+                  --set replicaCount=1 \
+                  --set image.pullPolicy=IfNotPresent \
+                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
                   --namespace default
