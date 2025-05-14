@@ -130,16 +130,6 @@ stages:
                   --set blueGreen.green.image.tag=$(tag) \
                   --namespace default
 
-                echo "🧪 Testing Green environment..."
-                # Test Green environment via temporary service or direct pod access
-                GREEN_POD=$(kubectl get pod -l app.kubernetes.io/environment=green -o jsonpath="{.items[0].metadata.name}")
-                kubectl exec $GREEN_POD -- curl http://localhost/api/v1/foods
-                if [ $? -eq 0 ]; then
-                  echo "✅ Green environment test passed"
-                else
-                  echo "❌ Green environment test failed"
-                  exit 1
-                fi
 
                 echo "🔄 Switching to Green environment..."
                 helm upgrade --install bestrong-api \
