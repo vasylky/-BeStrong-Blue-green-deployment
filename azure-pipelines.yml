@@ -83,10 +83,10 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "⚙️ Getting AKS credentials..."
+                echo " Getting AKS credentials..."
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
 
-                echo "📦 Installing ingress-nginx with LoadBalancer..."
+                echo " Installing ingress-nginx with LoadBalancer..."
                 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
                 helm repo update
                 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -94,7 +94,7 @@ stages:
                   --create-namespace \
                   --set controller.service.type=LoadBalancer
 
-                echo "🔐 Installing cert-manager..."
+                echo " Installing cert-manager..."
                 helm repo add jetstack https://charts.jetstack.io
                 helm repo update
                 helm upgrade --install cert-manager jetstack/cert-manager \
@@ -102,17 +102,17 @@ stages:
                   --create-namespace \
                   --set installCRDs=true
 
-                echo "🔐 Applying Self-Signed ClusterIssuer..."
+                echo " Applying Self-Signed ClusterIssuer..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
 
-                echo "🔐 Logging in to ACR..."
+                echo " Logging in to ACR..."
                 az acr login --name $(azureContainerRegistry)
 
-                echo "⤵️ Pulling Helm chart from ACR..."
+                echo " Pulling Helm chart from ACR..."
                 export HELM_EXPERIMENTAL_OCI=1
                 helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                echo "🚀 Deploying Green environment..."
+                echo " Deploying Green environment..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
@@ -131,7 +131,7 @@ stages:
                   --namespace default
 
 
-                echo "🔄 Switching to Green environment..."
+                
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
@@ -149,7 +149,7 @@ stages:
                   --set blueGreen.green.image.tag=$(tag) \
                   --namespace default
 
-                echo "🧹 Cleaning up old Blue environment..."
+                echo " Cleaning up old Blue environment..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \

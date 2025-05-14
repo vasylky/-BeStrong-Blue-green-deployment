@@ -14,7 +14,7 @@ environment:
 # Blue-Green Deployment configuration
 blueGreen:
   enabled: true
-  activeEnvironment: "blue" # "blue" or "green" to select active service
+  activeEnvironment: "blue" 
   blue:
     enabled: true
     image:
