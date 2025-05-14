@@ -1,4 +1,3 @@
-# Default values for bestrong chart
 replicaCount: 1
 
 image:
@@ -19,17 +18,17 @@ environment:
 ingress:
   enabled: true
   className: "nginx"
-
-
   annotations:
-    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: "selfsigned-issuer"
   hosts:
-    - host: bestrong.local 
+    - host: bestrong.local
       paths:
         - path: /
           pathType: Prefix
-  # tls:
-  #   - secretName: bestrong-api-tls
-  #     hosts:
-  #       - bestrong-api.nip.io  # This will be overwritten during deployment
+  tls:
+    - secretName: bestrong-tls
+      hosts:
+        - bestrong.local
 
+tls:
+  issuer: selfsigned-issuer

@@ -1,14 +1,10 @@
-trigger:
-  - main
-
 variables:
   azureContainerRegistry: 'bestrong'
   azureResourceGroup: 'rg-bestrong'
   imageRepository: 'bestrong-api'
   tag: '$(Build.BuildId)'
-  # Separate connection types for different Azure resources
-  dockerRegistryServiceConnection: 'bestrong-acr'  # Docker registry connection
-  azureRmServiceConnection: 'azure-conn'           # Azure Resource Manager connection
+  dockerRegistryServiceConnection: 'bestrong-acr'  
+  azureRmServiceConnection: 'azure-conn'           
 
 stages:
 # Stage 1: Build & Push Docker Image to ACR
@@ -50,10 +46,7 @@ stages:
     - task: HelmInstaller@1
       inputs:
         helmVersionToInstall: 'latest'
-    
 
-
-    # Using Helm v3's OCI support instead of deprecated az acr helm commands
     - task: AzureCLI@2
       displayName: 'Push Helm Chart to ACR as OCI artifact'
       inputs:
@@ -61,19 +54,12 @@ stages:
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          # Login to ACR using the Azure CLI
           az acr login --name $(azureContainerRegistry)
-          
-          # Package the Helm chart
           helm package $(Build.SourcesDirectory)/Helm \
             --version $(Build.BuildId) \
             --destination $(Build.ArtifactStagingDirectory)
-          
-          # Push Helm chart as OCI artifact to ACR
           export HELM_EXPERIMENTAL_OCI=1
           CHART_PATH=$(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
-          
-          # Push the chart using Helm's OCI support
           helm push $CHART_PATH oci://$(azureContainerRegistry).azurecr.io/helm
 
 # Stage 3: Deploy to AKS
@@ -96,7 +82,7 @@ stages:
               helmVersionToInstall: 'latest'
 
           - task: AzureCLI@2
-            displayName: 'Deploy from ACR to AKS'
+            displayName: 'Install cert-manager and Deploy to AKS'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
@@ -113,6 +99,17 @@ stages:
                   --create-namespace \
                   --set controller.service.type=LoadBalancer
 
+                echo "🔐 Installing cert-manager..."
+                helm repo add jetstack https://charts.jetstack.io
+                helm repo update
+                helm upgrade --install cert-manager jetstack/cert-manager \
+                  --namespace cert-manager \
+                  --create-namespace \
+                  --set installCRDs=true
+
+                echo "🔐 Applying Self-Signed ClusterIssuer..."
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
+
                 echo "🔐 Logging in to ACR..."
                 az acr login --name $(azureContainerRegistry)
 
@@ -128,4 +125,6 @@ stages:
                   --set replicaCount=2 \
                   --set image.pullPolicy=IfNotPresent \
                   --set environment.ASPNETCORE_ENVIRONMENT=Production \
+                  --set ingress.host=bestrong.local \
+                  --set tls.issuer=selfsigned-issuer \
                   --namespace default
