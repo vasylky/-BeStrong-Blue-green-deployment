@@ -18,29 +18,18 @@ environment:
 
 ingress:
   enabled: true
+  className: "nginx"
+
+
   annotations:
     kubernetes.io/ingress.class: nginx
-    cert-manager.io/cluster-issuer: selfsigned-issuer
   hosts:
-    - host: bestrong-api.nip.io  # This will be overwritten during deployment
+    - host: bestrong.local 
       paths:
         - path: /
           pathType: Prefix
-  tls:
-    - secretName: bestrong-api-tls
-      hosts:
-        - bestrong-api.nip.io  # This will be overwritten during deployment
+  # tls:
+  #   - secretName: bestrong-api-tls
+  #     hosts:
+  #       - bestrong-api.nip.io  # This will be overwritten during deployment
 
-resources: {}
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}
