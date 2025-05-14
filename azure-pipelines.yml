@@ -9,9 +9,6 @@ variables:
   # Separate connection types for different Azure resources
   dockerRegistryServiceConnection: 'bestrong-acr'  # Docker registry connection
   azureRmServiceConnection: 'azure-conn'           # Azure Resource Manager connection
-  # Using auto-generated domain with nip.io since we don't have a real domain
-  # This will create a domain like bestrong-api.[LOAD_BALANCER_IP].nip.io
-  domainName: 'auto-generate'
 
 stages:
 # Stage 1: Build & Push Docker Image to ACR
@@ -54,6 +51,8 @@ stages:
       inputs:
         helmVersionToInstall: 'latest'
     
+
+
     # Using Helm v3's OCI support instead of deprecated az acr helm commands
     - task: AzureCLI@2
       displayName: 'Push Helm Chart to ACR as OCI artifact'
@@ -97,7 +96,7 @@ stages:
               helmVersionToInstall: 'latest'
 
           - task: AzureCLI@2
-            displayName: 'Deploy from ACR to AKS with HTTPS'
+            displayName: 'Deploy from ACR to AKS'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
@@ -114,60 +113,6 @@ stages:
                   --create-namespace \
                   --set controller.service.type=LoadBalancer
 
-                echo "🔒 Installing cert-manager..."
-                helm repo add jetstack https://charts.jetstack.io
-                helm repo update
-                helm upgrade --install cert-manager jetstack/cert-manager \
-                  --namespace cert-manager \
-                  --create-namespace \
-                  --set installCRDs=true
-
-                echo "⏳ Waiting for cert-manager to be ready..."
-                kubectl -n cert-manager wait --for=condition=available deployment/cert-manager --timeout=120s
-                kubectl -n cert-manager wait --for=condition=available deployment/cert-manager-webhook --timeout=120s
-
-                # Get the LoadBalancer IP address for ingress-nginx
-                echo "⏳ Waiting for LoadBalancer IP..."
-                for i in {1..30}; do
-                  INGRESS_IP=$(kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-                  if [[ -n "$INGRESS_IP" ]]; then
-                    break
-                  fi
-                  echo "Waiting for LoadBalancer IP... (attempt $i/30)"
-                  sleep 10
-                done
-
-                if [[ -z "$INGRESS_IP" ]]; then
-                  echo "❌ Failed to get LoadBalancer IP after 5 minutes. Exiting."
-                  exit 1
-                fi
-                
-                echo "✅ LoadBalancer IP: $INGRESS_IP"
-                
-                # Using auto-generated domain with nip.io
-                ACTUAL_DOMAIN="auto-generate"
-                if [[ "$ACTUAL_DOMAIN" == "auto-generate" ]]; then
-                  ACTUAL_DOMAIN="bestrong-api.$INGRESS_IP.nip.io"
-                  echo "🌐 Using auto-generated domain: $ACTUAL_DOMAIN"
-                else
-                  echo "🌐 Using configured domain: $ACTUAL_DOMAIN"
-                fi
-
-                # Create ClusterIssuer for self-signed certificates
-                echo "🔏 Creating self-signed certificate issuer..."
-                cat <<EOF | kubectl apply -f -
-                apiVersion: cert-manager.io/v1
-                kind: ClusterIssuer
-                metadata:
-                  name: selfsigned-issuer
-                spec:
-                  selfSigned: {}
-                EOF
-                ISSUER_NAME="selfsigned-issuer"
-                
-                echo "⏳ Waiting for ClusterIssuer to be ready..."
-                sleep 10
-
                 echo "🔐 Logging in to ACR..."
                 az acr login --name $(azureContainerRegistry)
 
@@ -175,7 +120,7 @@ stages:
                 export HELM_EXPERIMENTAL_OCI=1
                 helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                echo "🚀 Deploying chart to AKS with TLS configuration..."
+                echo "🚀 Deploying chart to AKS..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
@@ -183,19 +128,4 @@ stages:
                   --set replicaCount=2 \
                   --set image.pullPolicy=IfNotPresent \
                   --set environment.ASPNETCORE_ENVIRONMENT=Production \
-                  --set ingress.enabled=true \
-                  --set ingress.annotations."kubernetes\.io/ingress\.class"=nginx \
-                  --set ingress.annotations."cert-manager\.io/cluster-issuer"=$ISSUER_NAME \
-                  --set ingress.hosts[0].host=$ACTUAL_DOMAIN \
-                  --set ingress.hosts[0].paths[0].path=/ \
-                  --set ingress.hosts[0].paths[0].pathType=Prefix \
-                  --set ingress.tls[0].secretName=bestrong-api-tls \
-                  --set ingress.tls[0].hosts[0]=$ACTUAL_DOMAIN \
                   --namespace default
-                
-                echo "🔍 Checking certificate status..."
-                sleep 30
-                kubectl get certificate -A
-                
-                echo "🌐 BeStrong API should now be accessible at: https://$ACTUAL_DOMAIN"
-                echo "NOTE: It may take a few minutes for the certificate to be issued and propagated."
