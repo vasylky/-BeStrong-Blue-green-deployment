@@ -1,25 +1,99 @@
+{{- if .Values.blueGreen.enabled }}
+# Blue Deployment
+{{- if .Values.blueGreen.blue.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bestrong.fullname" . }}-blue
+  labels:
+    {{- include "bestrong.labels" . | nindent 4 }}
+    app.kubernetes.io/environment: blue
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bestrong.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/environment: blue
+  template:
+    metadata:
+      labels:
+        {{- include "bestrong.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/environment: blue
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.blueGreen.blue.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ .Values.environment.ASPNETCORE_ENVIRONMENT }}
+{{- end }}
+
+# Green Deployment
+{{- if .Values.blueGreen.green.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bestrong.fullname" . }}-green
+  labels:
+    {{- include "bestrong.labels" . | nindent 4 }}
+    app.kubernetes.io/environment: green
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bestrong.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/environment: green
+  template:
+    metadata:
+      labels:
+        {{- include "bestrong.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/environment: green
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.blueGreen.green.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ .Values.environment.ASPNETCORE_ENVIRONMENT }}
+{{- end }}
+{{- else }}
+# Fallback to single Deployment (non Blue-Green)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "bestrong.fullname" . }}
   labels:
-    app: {{ include "bestrong.name" . }}
+    {{- include "bestrong.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "bestrong.name" . }}
+      {{- include "bestrong.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ include "bestrong.name" . }}
+        {{- include "bestrong.selectorLabels" . | nindent 8 }}
     spec:
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
-            - containerPort: 80
+            - name: http
+              containerPort: 80
+              protocol: TCP
           env:
             - name: ASPNETCORE_ENVIRONMENT
               value: {{ .Values.environment.ASPNETCORE_ENVIRONMENT }}
+{{- end }}

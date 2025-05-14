@@ -3,8 +3,8 @@ variables:
   azureResourceGroup: 'rg-bestrong'
   imageRepository: 'bestrong-api'
   tag: '$(Build.BuildId)'
-  dockerRegistryServiceConnection: 'bestrong-acr'  
-  azureRmServiceConnection: 'azure-conn'           
+  dockerRegistryServiceConnection: 'bestrong-acr'
+  azureRmServiceConnection: 'azure-conn'
 
 stages:
 # Stage 1: Build & Push Docker Image to ACR
@@ -15,13 +15,11 @@ stages:
       vmImage: 'ubuntu-latest'
     steps:
     - checkout: self
-
     - task: Docker@2
       displayName: 'Login to ACR'
       inputs:
         command: login
-        containerRegistry: '$(dockerRegistryServiceConnection)' 
-
+        containerRegistry: '$(dockerRegistryServiceConnection)'
     - task: Docker@2
       displayName: 'Build and Push Docker Image'
       inputs:
@@ -42,11 +40,9 @@ stages:
       vmImage: 'ubuntu-latest'
     steps:
     - checkout: self
-
     - task: HelmInstaller@1
       inputs:
         helmVersionToInstall: 'latest'
-
     - task: AzureCLI@2
       displayName: 'Push Helm Chart to ACR as OCI artifact'
       inputs:
@@ -62,7 +58,7 @@ stages:
           CHART_PATH=$(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
           helm push $CHART_PATH oci://$(azureContainerRegistry).azurecr.io/helm
 
-# Stage 3: Deploy to AKS
+# Stage 3: Deploy to AKS (Blue-Green)
 - stage: Deploy
   displayName: 'Deploy to AKS'
   dependsOn:
@@ -80,7 +76,6 @@ stages:
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
-
           - task: AzureCLI@2
             displayName: 'Install cert-manager and Deploy to AKS'
             inputs:
@@ -117,7 +112,7 @@ stages:
                 export HELM_EXPERIMENTAL_OCI=1
                 helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                echo "🚀 Deploying chart to AKS..."
+                echo "🚀 Deploying Green environment..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
@@ -127,4 +122,56 @@ stages:
                   --set environment.ASPNETCORE_ENVIRONMENT=Production \
                   --set ingress.host=bestrong.local \
                   --set tls.issuer=selfsigned-issuer \
+                  --set blueGreen.enabled=true \
+                  --set blueGreen.activeEnvironment=blue \
+                  --set blueGreen.blue.enabled=true \
+                  --set blueGreen.blue.image.tag=158 \
+                  --set blueGreen.green.enabled=true \
+                  --set blueGreen.green.image.tag=$(tag) \
+                  --namespace default
+
+                echo "🧪 Testing Green environment..."
+                # Test Green environment via temporary service or direct pod access
+                GREEN_POD=$(kubectl get pod -l app.kubernetes.io/environment=green -o jsonpath="{.items[0].metadata.name}")
+                kubectl exec $GREEN_POD -- curl http://localhost/api/v1/foods
+                if [ $? -eq 0 ]; then
+                  echo "✅ Green environment test passed"
+                else
+                  echo "❌ Green environment test failed"
+                  exit 1
+                fi
+
+                echo "🔄 Switching to Green environment..."
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
+                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.tag=$(tag) \
+                  --set replicaCount=2 \
+                  --set image.pullPolicy=IfNotPresent \
+                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
+                  --set ingress.host=bestrong.local \
+                  --set tls.issuer=selfsigned-issuer \
+                  --set blueGreen.enabled=true \
+                  --set blueGreen.activeEnvironment=green \
+                  --set blueGreen.blue.enabled=true \
+                  --set blueGreen.blue.image.tag=158 \
+                  --set blueGreen.green.enabled=true \
+                  --set blueGreen.green.image.tag=$(tag) \
+                  --namespace default
+
+                echo "🧹 Cleaning up old Blue environment..."
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
+                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.tag=$(tag) \
+                  --set replicaCount=2 \
+                  --set image.pullPolicy=IfNotPresent \
+                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
+                  --set ingress.host=bestrong.local \
+                  --set tls.issuer=selfsigned-issuer \
+                  --set blueGreen.enabled=true \
+                  --set blueGreen.activeEnvironment=green \
+                  --set blueGreen.blue.enabled=false \
+                  --set blueGreen.green.enabled=true \
+                  --set blueGreen.green.image.tag=$(tag) \
                   --namespace default

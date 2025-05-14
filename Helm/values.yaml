@@ -1,4 +1,4 @@
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: bestrong.azurecr.io/helm/bestrong
@@ -8,12 +8,25 @@ image:
 nameOverride: ""
 fullnameOverride: ""
 
+environment:
+  ASPNETCORE_ENVIRONMENT: Production
+
+# Blue-Green Deployment configuration
+blueGreen:
+  enabled: true
+  activeEnvironment: "blue" # "blue" or "green" to select active service
+  blue:
+    enabled: true
+    image:
+      tag: "158" # Blue version (stable)
+  green:
+    enabled: false
+    image:
+      tag: "159" # Green version (new)
+
 service:
   type: ClusterIP
   port: 80
-
-environment:
-  ASPNETCORE_ENVIRONMENT: Production
 
 ingress:
   enabled: true
