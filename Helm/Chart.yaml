@@ -30,10 +30,10 @@ values:
         paths:
           - path: /
             pathType: ImplementationSpecific
-    tls:
-      - hosts:
-          - bestrong.local
-        secretName: bestrong-tls
+    # tls:
+    #   - hosts:
+    #       - bestrong.local
+    #     secretName: bestrong-tls
 
   environment:
     ASPNETCORE_ENVIRONMENT: Production
