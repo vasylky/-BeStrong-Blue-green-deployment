@@ -58,6 +58,7 @@ stages:
           CHART_PATH=$(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
           helm push $CHART_PATH oci://$(azureContainerRegistry).azurecr.io/helm
 
+
 # Stage 3: Deploy to AKS (Blue-Green)
 - stage: Deploy
   displayName: 'Deploy to AKS'
@@ -77,16 +78,16 @@ stages:
             inputs:
               helmVersionToInstall: 'latest'
           - task: AzureCLI@2
-            displayName: 'Install cert-manager and Deploy to AKS'
+            displayName: 'Install prerequisites and Deploy to AKS'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo " Getting AKS credentials..."
+                echo "Getting AKS credentials..."
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
 
-                echo " Installing ingress-nginx with LoadBalancer..."
+                echo "Installing ingress-nginx with LoadBalancer..."
                 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
                 helm repo update
                 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -94,7 +95,7 @@ stages:
                   --create-namespace \
                   --set controller.service.type=LoadBalancer
 
-                echo " Installing cert-manager..."
+                echo "Installing cert-manager..."
                 helm repo add jetstack https://charts.jetstack.io
                 helm repo update
                 helm upgrade --install cert-manager jetstack/cert-manager \
@@ -102,36 +103,22 @@ stages:
                   --create-namespace \
                   --set installCRDs=true
 
-                echo " Applying Self-Signed ClusterIssuer..."
+                echo "Installing Prometheus Operator CRDs..."
+                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
+
+                echo "Applying Self-Signed ClusterIssuer..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
 
-                echo " Logging in to ACR..."
+                echo "Logging in to ACR..."
                 az acr login --name $(azureContainerRegistry)
 
-                echo " Pulling Helm chart from ACR..."
+                echo "Pulling Helm chart from ACR..."
                 export HELM_EXPERIMENTAL_OCI=1
-                helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
+                helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong --version $(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                echo " Deploying Green environment..."
-                helm upgrade --install bestrong-api \
-                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
-                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
-                  --set image.tag=$(tag) \
-                  --set replicaCount=2 \
-                  --set image.pullPolicy=IfNotPresent \
-                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
-                  --set ingress.host=bestrong.local \
-                  --set tls.issuer=selfsigned-issuer \
-                  --set blueGreen.enabled=true \
-                  --set blueGreen.activeEnvironment=blue \
-                  --set blueGreen.blue.enabled=true \
-                  --set blueGreen.blue.image.tag=158 \
-                  --set blueGreen.green.enabled=true \
-                  --set blueGreen.green.image.tag=$(tag) \
-                  --namespace default
-
-
-                
+                echo "Deploying Green environment with monitoring..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
@@ -147,12 +134,13 @@ stages:
                   --set blueGreen.blue.image.tag=158 \
                   --set blueGreen.green.enabled=true \
                   --set blueGreen.green.image.tag=$(tag) \
+                  --set monitoring.enabled=true \
                   --namespace default
 
-                echo " Cleaning up old Blue environment..."
+                echo "Cleaning up old Blue environment..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
-                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.repository=$( fundo azureContainerRegistry).azurecr.io/$(imageRepository) \
                   --set image.tag=$(tag) \
                   --set replicaCount=2 \
                   --set image.pullPolicy=IfNotPresent \
@@ -164,4 +152,5 @@ stages:
                   --set blueGreen.blue.enabled=false \
                   --set blueGreen.green.enabled=true \
                   --set blueGreen.green.image.tag=$(tag) \
+                  --set monitoring.enabled=true \
                   --namespace default

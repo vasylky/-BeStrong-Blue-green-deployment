@@ -45,3 +45,23 @@ ingress:
 
 tls:
   issuer: selfsigned-issuer
+
+
+monitoring:
+  enabled: true
+  prometheus:
+    resources:
+      requests:
+        memory: "400Mi"
+        cpu: "200m"
+      limits:
+        memory: "800Mi"
+        cpu: "500m"
+  grafana:
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "100m"
+      limits:
+        memory: "200Mi"
+        cpu: "200m"
