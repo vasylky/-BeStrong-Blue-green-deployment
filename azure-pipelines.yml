@@ -77,6 +77,7 @@ stages:
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
+          # In the Deploy stage, replace the CRD installation
           - task: AzureCLI@2
             displayName: 'Install prerequisites and Deploy to AKS'
             inputs:
@@ -104,9 +105,13 @@ stages:
                   --set installCRDs=true
 
                 echo "Installing Prometheus Operator CRDs..."
-                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
-                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
-                kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/example/prometheus-operator-crd/monitoring.coreos.com_prometheuses.yaml
+                helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                helm repo update
+                helm upgrade --install prometheus-operator-crds prometheus-community/prometheus-operator-crds \
+                  --namespace default
+
+                echo "Applying Self-Signed ClusterIssuer..."
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
 
                 echo "Applying Self-Signed ClusterIssuer..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
