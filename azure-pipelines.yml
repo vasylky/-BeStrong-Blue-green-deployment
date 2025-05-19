@@ -113,6 +113,16 @@ stages:
                   --create-namespace \
                   -f $(Build.SourcesDirectory)/Helm/monitoring/values.yaml
 
+                echo "Waiting for CRDs to become available..."
+                for crd in prometheuses.monitoring.coreos.com \
+                          prometheusrules.monitoring.coreos.com \
+                          servicemonitors.monitoring.coreos.com; do
+                  echo "Waiting for CRD $crd..."
+                  until kubectl get crd $crd > /dev/null 2>&1; do
+                    sleep 5
+                  done
+                done
+
                 echo "apply prometheus rule"
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/bestrong-alerts.yaml
 
