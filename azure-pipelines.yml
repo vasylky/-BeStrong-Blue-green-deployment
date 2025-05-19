@@ -73,6 +73,11 @@ stages:
       runOnce:
         deploy:
           steps:
+          - task: Bash@3
+            displayName: 'Debug: List directory contents'
+            inputs:
+              targetType: 'inline'
+              script: 'ls -R $(Build.SourcesDirectory)/Helm'
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
@@ -112,7 +117,15 @@ stages:
                   --namespace monitoring \
                   --create-namespace \
                   -f $(Build.SourcesDirectory)/Helm/monitoring/values.yaml
-
+                echo "Waiting for CRDs to become available..."
+                for crd in prometheuses.monitoring.coreos.com prometheusrules.monitoring.coreos.com servicemonitors.monitoring.coreos.com; do
+                  echo "Waiting for CRD $crd..."
+                  timeout 300 bash -c "until kubectl get crd $crd > /dev/null 2>&1; do sleep 5; done"
+                  if [ $? -ne 0 ]; then
+                    echo "Error: CRD $crd not available after 300 seconds"
+                    exit 1
+                  fi
+                done
                 echo "Waiting for CRDs to become available..."
                 for crd in prometheuses.monitoring.coreos.com \
                           prometheusrules.monitoring.coreos.com \
