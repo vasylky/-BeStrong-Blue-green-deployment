@@ -6,6 +6,11 @@ variables:
   dockerRegistryServiceConnection: 'bestrong-acr'
   azureRmServiceConnection: 'azure-conn'
 
+trigger:
+  branches:
+    include:
+      - main  # Replace with your branch name
+
 stages:
 # Stage 1: Build & Push Docker Image to ACR
 - stage: Build
@@ -15,6 +20,27 @@ stages:
       vmImage: 'ubuntu-latest'
     steps:
     - checkout: self
+      submodules: true
+      fetchDepth: 0
+      persistCredentials: true
+    - task: Bash@3
+      displayName: 'Debug: List repository contents'
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo "Repository contents:"
+          ls -R $(Build.SourcesDirectory)
+          echo "Helm directory contents:"
+          ls -R $(Build.SourcesDirectory)/Helm || echo "Helm directory not found"
+          echo "Checking specific files:"
+          for file in Helm/monitoring/values.yaml Helm/config/selfsigned-clusterissuer.yaml Helm/config/bestrong-alerts.yaml; do
+            if [ -f "$(Build.SourcesDirectory)/$file" ]; then
+              echo "Found $file"
+            else
+              echo "Error: $file not found"
+              exit 1
+            fi
+          done
     - task: Docker@2
       displayName: 'Login to ACR'
       inputs:
@@ -40,6 +66,18 @@ stages:
       vmImage: 'ubuntu-latest'
     steps:
     - checkout: self
+      submodules: true
+      fetchDepth: 0
+      persistCredentials: true
+    - task: Bash@3
+      displayName: 'Debug: List repository contents'
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo "Repository contents:"
+          ls -R $(Build.SourcesDirectory)
+          echo "Helm directory contents:"
+          ls -R $(Build.SourcesDirectory)/Helm || echo "Helm directory not found"
     - task: HelmInstaller@1
       inputs:
         helmVersionToInstall: 'latest'
@@ -73,25 +111,21 @@ stages:
       runOnce:
         deploy:
           steps:
-          - task: Bash@3
-            displayName: 'Debug: List directory contents'
-            inputs:
-              targetType: 'inline'
-              script: 'ls -R $(Build.SourcesDirectory)/Helm'
           - task: HelmInstaller@1
             inputs:
               helmVersionToInstall: 'latest'
           - task: AzureCLI@2
-            displayName: 'Install cert-manager and Deploy to AKS'
+            displayName: 'Install cert-manager and monitoring'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo " Getting AKS credentials..."
+                echo "Getting AKS credentials..."
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
+                kubectl cluster-info
 
-                echo " Installing ingress-nginx with LoadBalancer..."
+                echo "Installing ingress-nginx with LoadBalancer..."
                 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
                 helm repo update
                 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -99,7 +133,7 @@ stages:
                   --create-namespace \
                   --set controller.service.type=LoadBalancer
 
-                echo " Installing cert-manager..."
+                echo "Installing cert-manager..."
                 helm repo add jetstack https://charts.jetstack.io
                 helm repo update
                 helm upgrade --install cert-manager jetstack/cert-manager \
@@ -107,16 +141,17 @@ stages:
                   --create-namespace \
                   --set installCRDs=true
 
-                echo " Applying Self-Signed ClusterIssuer..."
+                echo "Applying Self-Signed ClusterIssuer..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
 
-                echo " Installing Prometheus and Grafana..."
+                echo "Installing Prometheus and Grafana..."
                 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
                 helm repo update
                 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
                   --namespace monitoring \
                   --create-namespace \
                   -f $(Build.SourcesDirectory)/Helm/monitoring/values.yaml
+
                 echo "Waiting for CRDs to become available..."
                 for crd in prometheuses.monitoring.coreos.com prometheusrules.monitoring.coreos.com servicemonitors.monitoring.coreos.com; do
                   echo "Waiting for CRD $crd..."
@@ -126,64 +161,32 @@ stages:
                     exit 1
                   fi
                 done
-                echo "Waiting for CRDs to become available..."
-                for crd in prometheuses.monitoring.coreos.com \
-                          prometheusrules.monitoring.coreos.com \
-                          servicemonitors.monitoring.coreos.com; do
-                  echo "Waiting for CRD $crd..."
-                  until kubectl get crd $crd > /dev/null 2>&1; do
-                    sleep 5
-                  done
-                done
-
-                echo "apply prometheus rule"
+          - task: AzureCLI@2
+            displayName: 'Apply Prometheus rules and deploy application'
+            inputs:
+              azureSubscription: '$(azureRmServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Applying Prometheus rule..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/bestrong-alerts.yaml
 
-                echo " Logging in to ACR..."
-                az acr login --name $(azureContainerRegistry)
+                echo "Logging in to ACR..."
+                for i in {1..3}; do
+                  az acr login --name $(azureContainerRegistry) && break
+                  echo "ACR login attempt $i failed, retrying..."
+                  sleep 5
+                done
 
-                echo " Pulling Helm chart from ACR..."
+                echo "Pulling Helm chart from ACR..."
                 export HELM_EXPERIMENTAL_OCI=1
                 helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                echo " Deploying Green environment..."
-                helm upgrade --install bestrong-api \
-                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
-                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
-                  --set image.tag=$(tag) \
-                  --set replicaCount=2 \
-                  --set image.pullPolicy=IfNotPresent \
-                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
-                  --set ingress.host=bestrong.local \
-                  --set tls.issuer=selfsigned-issuer \
-                  --set blueGreen.enabled=true \
-                  --set blueGreen.activeEnvironment=blue \
-                  --set blueGreen.blue.enabled=true \
-                  --set blueGreen.blue.image.tag=158 \
-                  --set blueGreen.green.enabled=true \
-                  --set blueGreen.green.image.tag=$(tag) \
-                  --namespace default
+                echo "Inspecting Helm chart..."
+                helm template $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz --debug > helm-template-output.yaml
+                cat helm-template-output.yaml
 
-
-                
-                helm upgrade --install bestrong-api \
-                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
-                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
-                  --set image.tag=$(tag) \
-                  --set replicaCount=2 \
-                  --set image.pullPolicy=IfNotPresent \
-                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
-                  --set ingress.host=bestrong.local \
-                  --set tls.issuer=selfsigned-issuer \
-                  --set blueGreen.enabled=true \
-                  --set blueGreen.activeEnvironment=green \
-                  --set blueGreen.blue.enabled=true \
-                  --set blueGreen.blue.image.tag=158 \
-                  --set blueGreen.green.enabled=true \
-                  --set blueGreen.green.image.tag=$(tag) \
-                  --namespace default
-
-                echo " Cleaning up old Blue environment..."
+                echo "Deploying Green environment and cleaning up Blue..."
                 helm upgrade --install bestrong-api \
                   $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
