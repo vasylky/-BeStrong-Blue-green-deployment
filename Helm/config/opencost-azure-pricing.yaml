@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: azure-pricing-config
+  namespace: opencost
+data:
+  azure.json: |
+    {
+      "provider": "Azure",
+      "region": "westeurope",
+      "pricing": {
+        "CPU": 0.045,
+        "RAM": 0.006,
+        "Storage": 0.0003
+      }
+    }

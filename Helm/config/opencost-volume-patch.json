@@ -1,0 +1,22 @@
+[
+    {
+      "op": "add",
+      "path": "/spec/template/spec/volumes/-",
+      "value": {
+        "name": "azure-pricing",
+        "configMap": {
+          "name": "azure-pricing-config"
+        }
+      }
+    },
+    {
+      "op": "add",
+      "path": "/spec/template/spec/containers/0/volumeMounts/-",
+      "value": {
+        "mountPath": "/models/azure.json",
+        "subPath": "azure.json",
+        "name": "azure-pricing"
+      }
+    }
+  ]
+  
