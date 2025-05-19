@@ -58,144 +58,12 @@ stages:
           CHART_PATH=$(Build.ArtifactStagingDirectory)/bestrong-$(Build.BuildId).tgz
           helm push $CHART_PATH oci://$(azureContainerRegistry).azurecr.io/helm
 
-# Stage 3: Infrastructure Setup (cert-manager, monitoring, etc.)
-- stage: InfrastructureSetup
-  displayName: 'Setup Infrastructure'
+# Stage 3: Deploy to AKS (Blue-Green)
+- stage: Deploy
+  displayName: 'Deploy to AKS'
   dependsOn:
     - Build
     - Package
-  jobs:
-  - deployment: SetupInfrastructure
-    pool:
-      vmImage: 'ubuntu-latest'
-    environment: 'production'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - task: AzureCLI@2
-            displayName: 'Setup AKS Infrastructure'
-            inputs:
-              azureSubscription: '$(azureRmServiceConnection)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                echo "Getting AKS credentials..."
-                az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
-
-                echo "Installing ingress-nginx with LoadBalancer..."
-                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-                helm repo update
-                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-                  --namespace ingress-nginx \
-                  --create-namespace \
-                  --set controller.service.type=LoadBalancer \
-                  --wait --timeout=10m
-
-                echo "Installing cert-manager..."
-                helm repo add jetstack https://charts.jetstack.io
-                helm repo update
-                helm upgrade --install cert-manager jetstack/cert-manager \
-                  --namespace cert-manager \
-                  --create-namespace \
-                  --set installCRDs=true \
-                  --wait --timeout=10m
-
-                echo "Waiting for cert-manager CRDs to be ready..."
-                kubectl wait --for condition=established --timeout=60s crd/certificates.cert-manager.io
-                kubectl wait --for condition=established --timeout=60s crd/certificaterequests.cert-manager.io
-                kubectl wait --for condition=established --timeout=60s crd/clusterissuers.cert-manager.io
-                kubectl wait --for condition=established --timeout=60s crd/issuers.cert-manager.io
-
-                echo "Creating Self-Signed ClusterIssuer..."
-                kubectl apply -f - <<EOF
-                apiVersion: cert-manager.io/v1
-                kind: ClusterIssuer
-                metadata:
-                  name: selfsigned-issuer
-                spec:
-                  selfSigned: {}
-                EOF
-
-                echo "Installing Prometheus and Grafana..."
-                helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-                helm repo update
-                
-                # Create default monitoring values if not exists
-                cat > /tmp/monitoring-values.yaml <<EOF
-                grafana:
-                  adminPassword: prom-operator
-                  ingress:
-                    enabled: false
-                prometheus:
-                  prometheusSpec:
-                    serviceMonitorSelectorNilUsesHelmValues: false
-                    ruleSelectorNilUsesHelmValues: false
-                    podMonitorSelectorNilUsesHelmValues: false
-                alertmanager:
-                  alertmanagerSpec:
-                    storage:
-                      volumeClaimTemplate:
-                        spec:
-                          accessModes: ["ReadWriteOnce"]
-                          resources:
-                            requests:
-                              storage: 10Gi
-                EOF
-
-                helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
-                  --namespace monitoring \
-                  --create-namespace \
-                  -f /tmp/monitoring-values.yaml \
-                  --wait --timeout=15m
-
-                echo "Waiting for Prometheus CRDs to become available..."
-                for crd in prometheuses.monitoring.coreos.com \
-                          prometheusrules.monitoring.coreos.com \
-                          servicemonitors.monitoring.coreos.com \
-                          podmonitors.monitoring.coreos.com; do
-                  echo "Waiting for CRD $crd..."
-                  kubectl wait --for condition=established --timeout=300s crd/$crd
-                done
-
-                echo "Creating BeStrong PrometheusRule..."
-                kubectl apply -f - <<EOF
-                apiVersion: monitoring.coreos.com/v1
-                kind: PrometheusRule
-                metadata:
-                  name: bestrong-api-alerts
-                  namespace: default
-                  labels:
-                    app: bestrong-api
-                spec:
-                  groups:
-                  - name: bestrong-api.rules
-                    rules:
-                    - alert: BestrongAPIDown
-                      expr: up{job="bestrong-api"} == 0
-                      for: 1m
-                      labels:
-                        severity: critical
-                      annotations:
-                        summary: "BeStrong API is down"
-                        description: "BeStrong API has been down for more than 1 minute."
-                    - alert: BestrongAPIHighResponseTime
-                      expr: http_request_duration_seconds{job="bestrong-api"} > 0.5
-                      for: 5m
-                      labels:
-                        severity: warning
-                      annotations:
-                        summary: "BeStrong API high response time"
-                        description: "BeStrong API response time is above 500ms for more than 5 minutes."
-                EOF
-
-                echo "Infrastructure setup completed successfully!"
-
-# Stage 4: Deploy Application to AKS (Blue-Green)
-- stage: Deploy
-  displayName: 'Deploy Application to AKS'
-  dependsOn:
-    - InfrastructureSetup
   jobs:
   - deployment: DeployToAKS
     pool:
@@ -209,33 +77,102 @@ stages:
             inputs:
               helmVersionToInstall: 'latest'
           - task: AzureCLI@2
-            displayName: 'Deploy Application to AKS'
+            displayName: 'Install cert-manager and Deploy to AKS'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Getting AKS credentials..."
+                echo " Getting AKS credentials..."
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
 
-                echo "Logging in to ACR..."
+                echo " Installing ingress-nginx with LoadBalancer..."
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                helm repo update
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+                  --namespace ingress-nginx \
+                  --create-namespace \
+                  --set controller.service.type=LoadBalancer
+
+                echo " Installing cert-manager..."
+                helm repo add jetstack https://charts.jetstack.io
+                helm repo update
+                helm upgrade --install cert-manager jetstack/cert-manager \
+                  --namespace cert-manager \
+                  --create-namespace \
+                  --set installCRDs=true
+
+                echo " Applying Self-Signed ClusterIssuer..."
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
+
+                echo " Installing Prometheus and Grafana..."
+                helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                helm repo update
+                helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+                  --namespace monitoring \
+                  --create-namespace \
+                  -f $(Build.SourcesDirectory)/Helm/monitoring/values.yaml
+
+                echo "Waiting for CRDs to become available..."
+                for crd in prometheuses.monitoring.coreos.com \
+                          prometheusrules.monitoring.coreos.com \
+                          servicemonitors.monitoring.coreos.com; do
+                  echo "Waiting for CRD $crd..."
+                  until kubectl get crd $crd > /dev/null 2>&1; do
+                    sleep 5
+                  done
+                done
+
+                echo "apply prometheus rule"
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/bestrong-alerts.yaml
+
+                echo " Logging in to ACR..."
                 az acr login --name $(azureContainerRegistry)
 
-                echo "Pulling Helm chart from ACR..."
+                echo " Pulling Helm chart from ACR..."
                 export HELM_EXPERIMENTAL_OCI=1
                 helm pull oci://$(azureContainerRegistry).azurecr.io/helm/bestrong:$(Build.BuildId) --destination $(Agent.TempDirectory)
 
-                # Create a minimal Helm chart template if the original has Prometheus resources
-                echo "Creating deployment-only Helm chart..."
-                mkdir -p $(Agent.TempDirectory)/bestrong-deploy
-                tar -xzf $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz -C $(Agent.TempDirectory)/bestrong-deploy --strip-components=1
+                echo " Deploying Green environment..."
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
+                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.tag=$(tag) \
+                  --set replicaCount=2 \
+                  --set image.pullPolicy=IfNotPresent \
+                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
+                  --set ingress.host=bestrong.local \
+                  --set tls.issuer=selfsigned-issuer \
+                  --set blueGreen.enabled=true \
+                  --set blueGreen.activeEnvironment=blue \
+                  --set blueGreen.blue.enabled=true \
+                  --set blueGreen.blue.image.tag=158 \
+                  --set blueGreen.green.enabled=true \
+                  --set blueGreen.green.image.tag=$(tag) \
+                  --namespace default
 
-                # Remove Prometheus-related templates to avoid CRD issues during initial deployment
-                find $(Agent.TempDirectory)/bestrong-deploy/templates -name "*prometheus*" -type f -delete || true
-                find $(Agent.TempDirectory)/bestrong-deploy/templates -name "*servicemonitor*" -type f -delete || true
 
-                echo "Deploying Green environment (Initial)..."
-                helm upgrade --install bestrong-api $(Agent.TempDirectory)/bestrong-deploy \
+                
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
+                  --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
+                  --set image.tag=$(tag) \
+                  --set replicaCount=2 \
+                  --set image.pullPolicy=IfNotPresent \
+                  --set environment.ASPNETCORE_ENVIRONMENT=Production \
+                  --set ingress.host=bestrong.local \
+                  --set tls.issuer=selfsigned-issuer \
+                  --set blueGreen.enabled=true \
+                  --set blueGreen.activeEnvironment=green \
+                  --set blueGreen.blue.enabled=true \
+                  --set blueGreen.blue.image.tag=158 \
+                  --set blueGreen.green.enabled=true \
+                  --set blueGreen.green.image.tag=$(tag) \
+                  --namespace default
+
+                echo " Cleaning up old Blue environment..."
+                helm upgrade --install bestrong-api \
+                  $(Agent.TempDirectory)/bestrong-$(Build.BuildId).tgz \
                   --set image.repository=$(azureContainerRegistry).azurecr.io/$(imageRepository) \
                   --set image.tag=$(tag) \
                   --set replicaCount=2 \
@@ -248,35 +185,4 @@ stages:
                   --set blueGreen.blue.enabled=false \
                   --set blueGreen.green.enabled=true \
                   --set blueGreen.green.image.tag=$(tag) \
-                  --namespace default \
-                  --wait --timeout=10m
-
-                echo "Waiting for deployment to be ready..."
-                kubectl wait --for=condition=available --timeout=300s deployment/bestrong-api-green -n default
-
-                echo "Creating ServiceMonitor for monitoring..."
-                kubectl apply -f - <<EOF
-                apiVersion: monitoring.coreos.com/v1
-                kind: ServiceMonitor
-                metadata:
-                  name: bestrong-api-servicemonitor
-                  namespace: default
-                  labels:
-                    app: bestrong-api
-                spec:
-                  selector:
-                    matchLabels:
-                      app: bestrong-api
-                  endpoints:
-                  - port: http
-                    path: /metrics
-                    interval: 30s
-                EOF
-
-                echo "Deployment completed successfully!"
-                
-                # Verify deployment
-                echo "Verifying deployment..."
-                kubectl get pods -n default -l app=bestrong-api
-                kubectl get services -n default -l app=bestrong-api
-                kubectl get ingress -n default
+                  --namespace default
