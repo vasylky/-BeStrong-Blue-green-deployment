@@ -264,3 +264,26 @@ stages:
                   --set blueGreen.green.enabled=true \
                   --set blueGreen.green.image.tag=$(tag) \
                   --namespace default
+
+                echo "============================================"
+                echo " DEPLOYING OpenCost AND CONFIGURING INGRESS "
+                echo "============================================"
+
+                echo "Deploying OpenCost via Helm..."
+                helm repo add opencost https://opencost.github.io/opencost-helm-chart
+                helm repo update
+                kubectl create namespace opencost --dry-run=client -o yaml | kubectl apply -f -
+                helm upgrade --install opencost opencost/opencost -n opencost
+
+                echo "Applying Azure pricing config for OpenCost..."
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/opencost-azure-pricing.yaml
+
+                echo "Patching OpenCost deployment to mount Azure pricing file..."
+                kubectl patch deployment opencost -n opencost --type='json' -p="$(cat $(Build.SourcesDirectory)/Helm/config/opencost-volume-patch.json)"
+
+                echo "Creating basic auth credentials for OpenCost Ingress..."
+                echo "${OPEN_COST_BASIC_AUTH}" > auth
+                kubectl create secret generic opencost-basic-auth --from-file=auth -n opencost --dry-run=client -o yaml | kubectl apply -f -
+
+                echo "Applying OpenCost Ingress from file..."
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/opencost-ingress.yaml
