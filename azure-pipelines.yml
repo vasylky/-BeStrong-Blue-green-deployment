@@ -33,12 +33,11 @@ stages:
           echo "Helm directory contents:"
           ls -R $(Build.SourcesDirectory)/Helm || echo "Helm directory not found"
           echo "Checking specific files:"
-          for file in Helm/monitoring/values.yaml Helm/config/selfsigned-clusterissuer.yaml Helm/config/bestrong-alerts.yaml; do
+          for file in Helm/monitoring/values.yaml Helm/config/selfsigned-clusterissuer.yaml Helm/config/bestrong-alerts.yaml Helm/config/bestrong-servicemonitor.yaml; do
             if [ -f "$(Build.SourcesDirectory)/$file" ]; then
               echo "Found $file"
             else
-              echo "Error: $file not found"
-              exit 1
+              echo "Warning: $file not found, will create in pipeline"
             fi
           done
     - task: Docker@2
@@ -125,6 +124,35 @@ stages:
                 az aks get-credentials -n aks-bestrong -g $(azureResourceGroup)
                 kubectl cluster-info
 
+                echo "Creating missing configuration files if they do not exist..."
+                mkdir -p $(Build.SourcesDirectory)/Helm/config
+                mkdir -p $(Build.SourcesDirectory)/Helm/monitoring
+
+                if [ ! -f "$(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml" ]; then
+                  echo "Creating selfsigned-clusterissuer.yaml..."
+                  cat << EOF > $(Build.SourcesDirectory)/Helm/config/selfsigned-clusterissuer.yaml
+                apiVersion: cert-manager.io/v1
+                kind: ClusterIssuer
+                metadata:
+                  name: selfsigned-issuer
+                spec:
+                  selfSigned: {}
+                EOF
+                fi
+
+                if [ ! -f "$(Build.SourcesDirectory)/Helm/monitoring/values.yaml" ]; then
+                  echo "Creating monitoring/values.yaml..."
+                  cat << EOF > $(Build.SourcesDirectory)/Helm/monitoring/values.yaml
+                prometheus:
+                  prometheusSpec:
+                    replicas: 1
+                    serviceMonitorSelectorNilUsesHelmValues: false
+                grafana:
+                  enabled: true
+                  adminPassword: prom-operator
+                EOF
+                fi
+
                 echo "Installing ingress-nginx with LoadBalancer..."
                 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
                 helm repo update
@@ -162,14 +190,48 @@ stages:
                   fi
                 done
           - task: AzureCLI@2
-            displayName: 'Apply Prometheus rules and deploy application'
+            displayName: 'Apply monitoring resources and deploy application'
             inputs:
               azureSubscription: '$(azureRmServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "Applying Prometheus rule..."
+                echo "Creating bestrong-servicemonitor.yaml if it does not exist..."
+                if [ ! -f "$(Build.SourcesDirectory)/Helm/config/bestrong-servicemonitor.yaml" ]; then
+                  echo "Creating bestrong-servicemonitor.yaml..."
+                  cat << EOF > $(Build.SourcesDirectory)/Helm/config/bestrong-servicemonitor.yaml
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: bestrong-api-servicemonitor
+                  namespace: monitoring
+                  labels:
+                    app.kubernetes.io/managed-by: Helm
+                    app.kubernetes.io/name: bestrong-api
+                    release: monitoring
+                  annotations:
+                    meta.helm.sh/release-name: monitoring
+                    meta.helm.sh/release-namespace: monitoring
+                spec:
+                  selector:
+                    matchLabels:
+                      app: bestrong-api
+                  endpoints:
+                  - port: http
+                    path: /metrics
+                  namespaceSelector:
+                    matchNames:
+                    - default
+                EOF
+                fi
+
+                echo "Cleaning up existing monitoring resources in default namespace..."
+                kubectl delete prometheusrule bestrong-api-alerts -n default --ignore-not-found=true
+                kubectl delete servicemonitor bestrong-api-servicemonitor -n default --ignore-not-found=true
+
+                echo "Applying monitoring resources in monitoring namespace..."
                 kubectl apply -f $(Build.SourcesDirectory)/Helm/config/bestrong-alerts.yaml
+                kubectl apply -f $(Build.SourcesDirectory)/Helm/config/bestrong-servicemonitor.yaml
 
                 echo "Logging in to ACR..."
                 for i in {1..3}; do
